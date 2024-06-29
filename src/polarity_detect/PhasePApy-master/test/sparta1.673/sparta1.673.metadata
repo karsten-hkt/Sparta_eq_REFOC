@@ -1,0 +1,4 @@
+#net|sta|loc|chan|lat|lon|elev|depth|azimuth|dip|instrument|scale|scalefreq|scaleunits|samplerate|start|end
+US|BLA|00|BH1|37.2113|-80.42049|634.0|0.0|356.0|0.0|Velocity Sensor|6.15725E8|0.02|m/s|40|2017-02-07T19:50:00.0000|
+US|BLA|00|BH2|37.2113|-80.42049|634.0|0.0|86.0|0.0|Velocity Sensor|6.15725E8|0.02|m/s|40|2017-02-07T19:50:00.0000|
+US|BLA|00|BHZ|37.2113|-80.42049|634.0|0.0|0.0|-90.0|Velocity Sensor|6.15725E8|0.02|m/s|40|2017-02-07T19:50:00.0000|

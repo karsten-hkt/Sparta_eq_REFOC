@@ -1,0 +1,177 @@
+复现REFOC
+    A New Focal Mechanism Calculation Algorithm (REFOC) Using Inter-Event Relative Radiation Patterns: Application to the Earthquakes in the Parkfield Area
+    Yifang Cheng1,2 , Richard M. Allen1,2 , and Taka'aki Taira2
+
+事件选择：
+    sparta区域：Complex rupture dynamics of the extremely shallow August 2020 M5.1 Sparta, North Carolina earthquake
+    Miguel Neves 1,5 , Lindsay Y. Chuang1, Wei Li2 , Zhigang Peng1, Paula M. Figueiredo3 &Sidao Ni4
+
+重定位数据存放位置：
+    ./last_bhw/data/sparta_eq_catalog/supplementary_data1_relocated_catalog_sparta.txt
+
+环境需要：
+python环境可直接按照REFOC环境要求安装，缺少的包pip就可以了，由于带有bash脚本，需要使用到SAC,taup,mseed2sac,gmt等辅助程序
+
+具体实现：
+一 —— 各个事件下载：
+1 预处理事件数据，得到时间、经度、纬度、深度、震级信息
+    ./last_bhw/src/data_download/data_processing.py
+    输入：
+    ./last_bhw/data/sparta_eq_catalog/supplementary_data1_relocated_catalog_sparta.txt
+    输出：
+    ./last_bhw/data/sparta_eq_catalog/data_processing.csv
+
+2 选择需要的时间，使用震后前30天的数据进行下载
+    使用Fetch_data下载数据，使用sac处理数据，完成重命名，去仪器响应，旋转操作
+2-1 先统一下载仪器响应文件，震中周围150km以内，HH*和BH*, 时间震后30天，只用PZ文件
+    ./last_bhw/data/sparta_af_30_eq/PZ_download.sh
+    输出：
+    ./last_bhw/data/sparta_af_30_eq/PZ
+2-2 下载对应的台站数据，并去除仪器响应
+    下载时间为地震时间的前10s到4*60s，所有台站，震中范围内1度的数据，BH*/HH*,有数据就下载，
+    滤波：trans from pol s SAC.PZs to none freq 0.05 0.1 10 150
+    使用脚本：event_download.py
+    输入:
+    ./last_bhw/data/sparta_eq_catalog/data_processing.csv
+    输出：
+    下载的事件：../../data/sparta_eq_catalog/day_2_event.csv
+    事件下载对应文件：../../data/sparta_af_30_eq/sparta_download.txt
+    事件存放位置：每个事件按照sparta+相对主震的时间标注出，内部有data(源文件)、data_pre(去除仪器响应后的)文件
+    具体路径为：../../data/sparta_af_30_eq/sac_data
+2-3 切割数据，并旋转大圆路径，每个文件夹下对应的操作应该是一样的，可以写一个统一的脚本
+    具体执行event_rotate.py脚本，会在每个生成的文件夹内放置一个rotate.sh脚本，该脚本对事件进行旋转和裁剪
+    裁剪为o的-5到180
+    执行后结果保存在对应文件夹中的rotate中，也是最终会使用的数据位置
+
+3 判断P波和S波的初至，并识别其初动的polarity
+3-1PhasePApy 具体调用PhasePApy内的代码进行初至及极性识别
+    由于很多程序并没有开源，使用的是Chen, C., & Holland, A. A. (2016). for Automatic Identification of Seismic Phases. 87(6). https://doi.org/10.1785/0220160019
+    文章使用的具体代码放置在了./last_bhw/src/polarity_detect/PhasePApy-master中
+    对应代码：picker_PhasePApy.py
+    具体步骤为：1 判断信号的信噪比，若超过2则进行下一步，否则返回None；2 调用函数aicdpicker进行初至识别；
+    输入为：所有下载数据并保存在rotate之中的z分量
+    输出为：文件名，震级，发震时间，台站，每个事件对应的信噪比，极性，方位角，p波初至时间，s波初至时间（由taup给定的）
+    输出位置：../../output/polarity_info_based_on_PhasePApy-master/picker_info.csv
+    实际效果并不好，很多极性都无法识别出来，不适用
+3-1DiTingMotion 具体调用DiTingMotion内的代码进行初至及极性识别
+    使用的是：Zhao, M., Xiao, Z., Zhang, M., Yang, Y., Tang, L., & Chen, S. (2023). DiTingMotion: A deep-learning first-motion-polarity classifier and its application to focal mechanism inversion. Frontiers in Earth Science, 11(March), 1–10. https://doi.org/10.3389/feart.2023.1103914
+    文章使用的具体代码放置在了./last_bhw/src/polarity_detect/DiTing-FOCALFLOW-main中
+    具体步骤与PhasePApy相同，差别在于极性的选取使用了深度学习的方法，优势在于每个事件都可以识别出极性，缺点在于不知道识别的正确性如何，没有评价指标
+    新的格式：['event_name', 'event_time', 'event_mag','net', 'sta', 'comp', 'slat','slon','sevla','dist',
+									'snr', 'polarity', 'sharpness','ray_azimuth', 'take_off_angle', 'P_time', 'S_time']
+    输入为：所有下载数据并保存在rotate之中的z分量
+    输出为：文件名，震级，发震时间，台站，每个事件对应的信噪比，极性，方位角，p波初至时间，s波初至时间（由taup给定的）
+    输出位置：../../output/polarity_info_based_on_DiTing/picker_info.csv
+
+4 将输出的文件转换为REFOC需要的格式
+4-1 生成evlist_ex
+    目标格式：2019 01 73129456 35.84653 -120.39304 6.531 2.82 2019/201901/73129456
+            2019 01 73129461 35.84878 -120.3954 6.56 1.21 2019/201901/73129461
+            2019 01 73129466 35.84845 -120.39525 6.521 1.61 2019/201901/73129466
+            年份 月份 时间戳 纬度 经度 深度 震级 文件位置
+    使用脚本：./last_bhw/src/INPUT_data_prepare/generate_evlist_ex.py
+    将时间戳转为间隔主震时间
+    输出格式：2020 08 0.0 36.48296 -81.09989 3.067 5.14 2020/202008/0.0
+            2020 08 0.0142 36.49231 -81.10773 2.773 0.91 2020/202008/0.0142
+            2020 08 0.1516 36.47091 -81.08893 9.339 1.8 2020/202008/0.1516
+    输入：
+    ./last_bhw/data/sparta_eq_catalog/data_processing.csv
+    处理为：
+    ./last_bhw/data/sparta_eq_catalog/evlist_ex
+4-2 生成locfile，location file for all earthquakes
+    目标格式：2019 01 01 01 03 37.750  73128971  38.80992 -122.82916   2.983  1.06   0.000   0.000   0.000   0.000   1d
+            2019 01 01 01 22 25.750  73128981  37.67668 -121.97470   9.711  1.64   0.000   0.000   0.000   0.000   1d
+            2019 01 01 01 28 28.720  73128991  37.64524 -118.91153   7.242  0.85   0.000   0.000   0.000   0.000   1d
+    使用脚本：./last_bhw/src/INPUT_data_prepare/generate_locfile.py
+    由于sub_hashphase中有两种读法，使用reloc的读法即可
+    输出格式：2020 8 9 12 7 37.821 0.0 36.48296 -81.09989 3.067 5.14 0.0 0.0 0.0 0.0 1d
+            2020 8 9 12 28 2.657 0.0142 36.49231 -81.10773 2.773 0.91 0.0 0.0 0.0 0.0 1d
+            2020 8 9 15 45 56.581 0.1516 36.47091 -81.08893 9.339 1.8 0.0 0.0 0.0 0.0 1d
+    输入：
+    ./last_bhw/data/sparta_eq_catalog/supplementary_data1_relocated_catalog_sparta.txt
+    处理为：
+    ./last_bhw/data/sparta_eq_catalog/sparta_relocation.txt
+4-3 生成station file
+    目标格式：CE  00022 HNE  -- Winterhaven - Sheriff Substati   32.73900 -114.63570    40 1999/12/01 3000/01/01       0
+            CE  00022 HNN  -- Winterhaven - Sheriff Substati   32.73900 -114.63570    40 1999/12/01 3000/01/01       0
+            CE  00022 HNZ  -- Winterhaven - Sheriff Substati   32.73900 -114.63570    40 1999/12/01 3000/01/01       0
+            CE  01711 HNZ  -- El Centro - Imperial & Ross      32.77970 -115.56750    -7 2002/12/10 3000/01/01       0
+    4-3-1使用脚本：./last_bhw/src/INPUT_data_prepare/generate_station_file_step1.py
+    需要使用obspy下载当地所有的台站的xml文件，方便处理和使用
+    4-3-2使用脚本：./last_bhw/src/INPUT_data_prepare/generate_station_file_step2.py
+    REFOC读取的时候使用的是字符位置，到时候需要修改REFOC源码中的
+    staloc = {}
+    fid = open(ip.stafile)
+    for line in fid:
+        net = line[:2]
+        sta = line[2:9]
+        lat = float(line[51:59])
+        lon = float(line[60:70])
+        elev = float(line[72:76])
+        staloc[net.split()[0]+' '+sta.split()[0]] = (lat,lon,elev)
+    从而达到可以匹配现有格式的目的，现阶段输出格式，只需要这些
+    station_info = pd.DataFrame(columns=['net', 'sta', 'lat', 'lon', 'elev'])
+    global staloc
+    staloc = {}
+    fid = pd.read_csv(ip.stafile, sep='\s+', header=None, names=['net', 'sta', 'lat', 'lon', 'elev'])
+    for i in range(fid.shape[0]):
+        net = fid.loc[i, 'net']
+        sta = fid.loc[i, 'sta']
+        lat = fid.loc[i, 'lat']
+        lon = fid.loc[i, 'lon']
+        elev = fid.loc[i, 'elev']
+        staloc[net+' '+sta] = (lat,lon,elev)
+4-4 生成polarity reversal file，这个数据不知道去哪里找
+    直接排除这一步，若是去除仪器响应应该这步影响不大
+    但是REFOCstep2的代码需要调整，跳过这一步
+4-5 directory for waveform files
+    由于文章内读取数据的模型与现阶段不同，同时它的文件格式类似与一个文件夹，与本次代码存储的格式类似，可以加上rotate的限定读取对应的文件
+    但由于每个代码内读取文件的形式单一，若是要修改很麻烦，还是保存成类似的存储形式
+    使用代码：./last_bhw/src/INPUT_data_prepare/move_waveform_file.sh
+    文件夹形式修改成REFOC需要的形式：按照WAVEFORM年份/月份/间隔时间,而这对应这evlist的前三行和最后一行
+    没有那么智能，由于都集中在一个时间，需要自己创建文件夹
+4-6 生成PHASE，directory for phase files
+    具体目录格式与WAVEFORM相同，但是文件内容不同，为
+      73129456 eq  l 2019/01/02,20:06:28.600   35.8448   -120.3920   6.50  2.82  l 1.0
+	BK  HAST  HHZ --   36.3887  -121.5514   539.0 P d. e  1.0  120.40  19.850
+	BK  HULI  HHZ --   36.0213  -121.2355   342.0 P c. e  1.0   78.40  13.640
+	BK  LIND  HHZ --   36.3531  -119.0567   154.0 P .. e  1.0  132.60  21.650
+	每个台站的信息和对应的各个台站观测信息
+	使用代码：./last_bhw/src/INPUT_data_prepare/generate_phase_file.py
+    生成对应的文件夹和文件
+    由于sub_hashphase中有两种读法，第一行使用reloc的读法即可，保存格式类似与之前的locfile
+    picker需要['net','sta','comp','code','slat','slon','sevla', 'phase', 'polar','onset','weight', 'dist', 'tt']
+    需要的文件：../../output/polarity_info_based_on_DiTing/picker_info.csv
+              ../../INPUT/evlist_ex
+              ../../INPUT/sparta_relocation.txt
+    输出位置：../../INPUT/PHASE
+4-7 VMODEL
+    直接在外部寻找，不需要生成,但需要插值成对应的格式
+    使用重定位时候使用的速度模型
+    chapman_velocity_model: 引用自文章Chapman, M. C. On the Rupture Process of the 23 August 2011 Virginia Earthquake. Bull. Seismolog. Soc. Am. 103, 613 (2013).
+    插值使用：generate_velocity_model.py
+
+5 REFOC 程序运行
+    具体代码直接复制REFOC的代码，修改读取文件参数
+    运行步骤与REFOC相同
+    问题：里面存在两个文件并无法生成，为table中的ttp_median.txt和tts_median.txt（源代码中也未指出这是什么文件，个人推测是不同震源深度和不同震中距下的P波理论到时和S波理论到时，但是如何生成并不知道，内部的数值也怪怪的）
+    本次实验单纯使用REFOC源码中提供的这两个ttp_median.txt和tts_median.txt文件
+    最终输出结果位于../../output/iter0以及../../output/iter1中
+    iter0为第一次迭代结果，类似于HASH结果，
+    iter1为第二次迭代结果，为最终结果
+    结果解释输出文件解释：
+    year month day hour minute second day_interval latitude longitude depth magnitude str_avg dpi_avg rak_avg rot_avg rot_avg nppl mfrac nspr mavg qual prob magap mpgap mfrac stdr
+    2020  8  9 12  7 37.821              0.0  36.48296  -81.09989   3.067  5.140  205  30  -85  74  74    0  0.00    0  0.00 E 0.13 360  90 0.00 0.00    0 0.00    0 0.00
+
+6 results showing
+对于iter1的结果，将其统计为最终的绘图所需脚本，并使用gmt进行绘图
+6-1 生成绘图所需的文件，需要震源机制解
+    输入：../../output/iter1/2020/202008内所有文件
+    使用代码：./last_bhw/src/OUTPUT_data_prepare/summarize_results.py
+    输出格式：
+    X  Y  depth  strike  dip  rake  mag  [newX  newY]  [title]
+    最终输出结果位于../../output/summarize_results.csv
+6-2 绘制结果
+    使用gmt
+    代码为：./last_bhw/src/OUTPUT_data_prepare/results_plot.sh
+    输出为：../../output/results_showing/sparta.png
